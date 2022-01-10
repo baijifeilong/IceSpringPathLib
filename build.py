@@ -40,7 +40,7 @@ def doBuild():
             license='MIT',
             author='BaiJiFeiLong',
             author_email='baijifeilong@gmail.com',
-            version='1.0.0',
+            version='1.1.0',
             description='`pathlib` Wrapper with **UTF-8 first** and **LineFeed first**, based on `pathlib3x`.',
             packages=["IceSpringPathLib"],
             package_data={"IceSpringPathLib": ['*.pyi']},
