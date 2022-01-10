@@ -29,10 +29,8 @@ def main():
 def processScript(path) -> str:
     text = path.read_text("utf8")
     text = "\n".join([x.replace("pathlib3x", "IceSpringPathLib") if "import" in x else x for x in text.splitlines()])
-    if path.name == "pathlib3x.py":
-        text = libcst.parse_module(text).visit(PyTransformer()).code
-    elif path.name == "pathlib3x.pyi":
-        text = libcst.parse_module(text).visit(PyiTransformer()).code
+    if path.name in ["pathlib3x.py", "pathlib3x.pyi"]:
+        text = libcst.parse_module(text).visit(PyTransformer(isStub=path.suffix == ".pyi")).code
     return "\n".join(['"""', "\n\n".join([
         "`pathlib` Wrapper with **UTF-8 first** and **LineFeed first**, based on `pathlib3x`.",
         "Home: https://baijifeilong.github.io/2022/01/08/ice-spring-path-lib/index.html",
@@ -54,6 +52,15 @@ def initLogging():
 class PyTransformer(libcst.CSTTransformer):
     currentClass = None
     currentMethod = None
+    isStub: bool
+
+    def __init__(self, isStub: bool):
+        super().__init__()
+        self.isStub = isStub
+
+    @property
+    def fileType(self) -> str:
+        return "stub" if self.isStub else "source"
 
     def visit_ClassDef_name(self, node: "ClassDef") -> None:
         self.currentClass = node.name.value
@@ -66,16 +73,23 @@ class PyTransformer(libcst.CSTTransformer):
         currentParameter = original_node.name.value
         if self.currentClass == "Path" and self.currentMethod in ["open", "read_text", "write_text"] \
                 and currentParameter == "encoding":
-            logging.info("Processing source %s.%s: set utf8 default", self.currentClass, self.currentMethod)
+            logging.info(f"Processing {self.fileType} %s.%s: set utf8 default", self.currentClass, self.currentMethod)
             return updated_node.with_changes(default=libcst.SimpleString("'utf8'"))
         return updated_node
 
     def leave_Parameters(self, original_node: "Parameters", updated_node: "Parameters") -> "Parameters":
         if self.currentClass == "Path" and self.currentMethod in ["read_text", "write_text"]:
-            logging.info("Processing source %s.%s: add newline parameter", self.currentClass, self.currentMethod)
-            return updated_node.with_changes(params=list(updated_node.params) + [
-                libcst.Param(name=libcst.Name(value="newline"), default=libcst.SimpleString(r"'\n'"))
-            ])
+            logging.info(f"Processing {self.fileType} %s.%s: add newline parameter", self.currentClass,
+                self.currentMethod)
+            default = libcst.SimpleString(r"'\n'") if self.currentMethod == "write_text" else libcst.Name(value="None")
+            return updated_node.with_changes(params=list(updated_node.params) + [libcst.Param(
+                name=libcst.Name(value="newline"),
+                annotation=libcst.Annotation(annotation=libcst.Subscript(
+                    value=libcst.Name(value="Optional"),
+                    slice=[libcst.SubscriptElement(slice=libcst.Index(value=libcst.Name(value="str")))]
+                )) if self.isStub else None,
+                default=default
+            )])
         return updated_node
 
     def leave_Call(self, original_node: "Call", updated_node: "Call") -> "BaseExpression":
@@ -83,36 +97,10 @@ class PyTransformer(libcst.CSTTransformer):
             func = original_node.func
             if isinstance(func, libcst.Attribute) and isinstance(func.value,
                     libcst.Name) and func.value.value == "self" and func.attr.value == "open":
-                logging.info("Processing source %s.%s: add newline argument", self.currentClass, self.currentMethod)
-                return updated_node.with_changes(args=list(updated_node.args) + [
-                    libcst.Arg(keyword=libcst.Name(value="newline"), value=libcst.Name(value='newline'))
-                ])
-        return updated_node
-
-
-class PyiTransformer(libcst.CSTTransformer):
-    currentClass = None
-    currentMethod = None
-
-    def visit_ClassDef_name(self, node: "ClassDef") -> None:
-        self.currentClass = node.name.value
-
-    def visit_FunctionDef_name(self, node: "FunctionDef") -> None:
-        self.currentMethod = node.name.value
-
-    def leave_Parameters(self, original_node: "Parameters", updated_node: "Parameters") -> "Parameters":
-        if self.currentClass == "Path" and self.currentMethod in ["read_text", "write_text"]:
-            logging.info("Processing stub %s.%s: add newline parameter", self.currentClass, self.currentMethod)
-            return updated_node.with_changes(params=list(updated_node.params) + [
-                libcst.Param(
-                    name=libcst.Name(value="newline"),
-                    annotation=libcst.Annotation(annotation=libcst.Subscript(
-                        value=libcst.Name(value="Optional"),
-                        slice=[libcst.SubscriptElement(slice=libcst.Index(value=libcst.Name(value="str")))]
-                    )),
-                    default=libcst.Ellipsis()
-                )
-            ])
+                logging.info(f"Processing {self.fileType} %s.%s: add newline argument", self.currentClass,
+                    self.currentMethod)
+                return updated_node.with_changes(args=list(updated_node.args) + [libcst.Arg(
+                    keyword=libcst.Name(value="newline"), value=libcst.Name(value='newline'))])
         return updated_node
 
 
